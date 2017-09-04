@@ -14,50 +14,65 @@ class MultiFileReadStream extends Readable {
             throw new Error('files must be supplied')
         }
 
-        const self = this;
+
         this.EventEmitter = new EventEmitter();
-        this.filePaths = options.files;
-        this.files = {};
         this.count = 0;
+        this.options = options;
+
+
         const fs = require('fs');
-        this.filePaths.forEach(function(file, index) {
+        const self = this;
+
+        options.files.forEach(function(file, index) {
             const readStream = fs.createReadStream(file);
+
+            const fileObject = {
+                path: file,
+                name: require('path').basename(file),
+                ext: require('path').extname(file),
+                contents: [],
+                index
+            }
 
             readStream.on('data', function(data) {
                 data = data.toString('utf8')
-                console.log('reading')
-                if (!self.files[file]) {
-                    const fileObject = {
-                        path: file,
-                        name: require('path').basename(file),
-                        ext: require('path').extname(file),
-                        contents: [data],
-                        index
-                    }
-                    self.files[file] = fileObject;
-                } else {
-                    self.files[file].contents.push(data);
-                }
+                fileObject.contents.push(data);
             })
 
             readStream.on('end', function() {
-                self.files[file].isFullyRead = true
-                self.EventEmitter.emit('fileRead', self.files[file]);
+                self.EventEmitter.emit('fileRead', fileObject);
                 readStream.close();
             })
+
+            readStream.on('error', function(err) {
+                self.EventEmitter.emit('error');
+                readStream.close();
+                self.close();
+                if (options.errorFn) {
+                    options.errorFn.call(null, err);
+                }
+            })
+
+            readStream.emit('error', new Error('hm'))
+
+
         })
     }
 
     _read() {
         const self = this;
 
-        if (self.count === this.filePaths.length - 1) {
+        if (self.count === self.options.files.length - 1) {
             console.log('pushing null')
             self.push(null);
         } else {
             self.EventEmitter.once('fileRead', function(file) {
                 self.push(file);
                 self.count += 1;
+            })
+
+            self.EventEmitter.once('error', function() {
+                self.push(null);
             })
         }
     }
@@ -66,18 +81,14 @@ class MultiFileReadStream extends Readable {
 
 function src() {
     return new MultiFileReadStream({
-        files: Array.prototype.slice.call(arguments)
+        files: Array.prototype.slice.call(arguments, 0, arguments.length - 1),
+        errorFn: arguments[arguments.length - 1]
     })
 }
 
 
-src('./bin/myoutfile.json', './bin/myreadfile.json')
-    .on('data', function(data) {
-
-        console.log('file: ')
-        console.log('========')
-        console.dir(data)
-        console.log('==========')
-    }).on('end', function() {
-        console.log('finished reading')
-    })
+src('./bin/myoutfile.json', './bin/myreadfile.json', function(err) {
+    console.log(err)
+}).on('data', function(data) {
+    console.log(data)
+})
