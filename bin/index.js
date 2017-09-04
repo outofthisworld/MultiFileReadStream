@@ -1,93 +1,83 @@
-/*
-    Runs a task in series on the next tick.
-    All tasks will run consecutively on the next tick.
-*/
-function series_1(arr, cb) {
-    process.nextTick(function() {
-        let results = []
-        let err = null;
-        for (let i = 0; i < arr.length; i++) {
-            try {
-                const r = arr[i].call(null, results[results.length - 1], results)
-                results.push(r);
-            } catch (err) {
-                err = err;
-            }
+//Import our readable stream
+const { Readable } = require('stream');
+const { EventEmitter } = require('events')
+
+
+class MultiFileReadStream extends Readable {
+
+    constructor(options) {
+        super(Object.assign(options, {
+            objectMode: true
+        }));
+
+        if (!options.files || !Array.isArray(options.files)) {
+            throw new Error('files must be supplied')
         }
-        return cb(err, results);
-    });
 
-    return series_1;
-}
+        const self = this;
+        this.EventEmitter = new EventEmitter();
+        this.filePaths = options.files;
+        this.files = {};
+        this.count = 0;
+        const fs = require('fs');
+        this.filePaths.forEach(function(file, index) {
+            const readStream = fs.createReadStream(file);
 
-series_1([
-    function calculateAddition() {
-        return 1 + 2;
-    },
-    function calculateDivision(result) {
-        return result / 3;
-    },
-    function multiplyBy10(result) {
-        return result * 10;
+            readStream.on('data', function(data) {
+                data = data.toString('utf8')
+                console.log('reading')
+                if (!self.files[file]) {
+                    const fileObject = {
+                        path: file,
+                        name: require('path').basename(file),
+                        ext: require('path').extname(file),
+                        contents: [data],
+                        index
+                    }
+                    self.files[file] = fileObject;
+                } else {
+                    self.files[file].contents.push(data);
+                }
+            })
+
+            readStream.on('end', function() {
+                self.files[file].isFullyRead = true
+                self.EventEmitter.emit('fileRead', self.files[file]);
+                readStream.close();
+            })
+        })
     }
-], function(err, results) {
-    if (err) {
-        console.log(err)
-    } else {
-        console.log('done results:' + results)
-    }
-})
 
-console.log('down here')
+    _read() {
+        const self = this;
 
-/*
-    Runs tasks in series, however this next each task in the series runs 
-    on the next event tick after the prior task.
-*/
-function series_2(arr, cb) {
-    let pos = 0;
-    const results = [];
-
-    function schedule(err, result) {
-        if (pos > 0)
-            results.push(result);
-
-        if (err || pos === arr.length) {
-            return cb(err, results);
+        if (self.count === this.filePaths.length - 1) {
+            console.log('pushing null')
+            self.push(null);
+        } else {
+            self.EventEmitter.once('fileRead', function(file) {
+                self.push(file);
+                self.count += 1;
+            })
         }
-        process.nextTick(() => wrapper(schedule, results));
     }
-
-    function wrapper(schedule, results) {
-        const fn = arr[pos++];
-        let result;
-        let err;
-        try {
-            result = fn.call(null, results[pos - 2]);
-        } catch (err) {
-            err = err;
-        }
-        return schedule(err, result);
-    }
-
-    schedule();
 }
 
 
-series_2([
-    function calculateAddition() {
-        return 1 + 2;
-    },
-    function calculateDivision(result) {
-        return result / 3;
-    },
-    function multiplyBy10(result) {
-        return result * 10;
-    }
-], function(err, results) {
-    if (err) {
-        console.log(err)
-    } else {
-        console.log('series 2 done results:' + results)
-    }
-})
+function src() {
+    return new MultiFileReadStream({
+        files: Array.prototype.slice.call(arguments)
+    })
+}
+
+
+src('./bin/myoutfile.json', './bin/myreadfile.json')
+    .on('data', function(data) {
+
+        console.log('file: ')
+        console.log('========')
+        console.dir(data)
+        console.log('==========')
+    }).on('end', function() {
+        console.log('finished reading')
+    })
