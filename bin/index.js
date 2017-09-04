@@ -14,16 +14,16 @@ class MultiFileReadStream extends Readable {
             throw new Error('files must be supplied')
         }
 
-
-        this.EventEmitter = new EventEmitter();
         this.count = 0;
         this.options = options;
+        this._readFiles(options.files, options.errorFn);
+    }
 
-
+    _readFiles(files, errCb) {
         const fs = require('fs');
         const self = this;
 
-        options.files.forEach(function(file, index) {
+        files.forEach(function(file, index) {
             const readStream = fs.createReadStream(file);
 
             const fileObject = {
@@ -40,22 +40,23 @@ class MultiFileReadStream extends Readable {
             })
 
             readStream.on('end', function() {
-                self.EventEmitter.emit('fileRead', fileObject);
+                if (!self.errorState)
+                    self.emit('fileRead', fileObject);
                 readStream.close();
             })
 
             readStream.on('error', function(err) {
-                self.EventEmitter.emit('error');
-                readStream.close();
-                self.close();
-                if (options.errorFn) {
-                    options.errorFn.call(null, err);
+                if (!self.errorState) {
+                    readStream.close();
+                    if (errCb) {
+                        errCb.call(self, err);
+                    }
+
+                    self.errorState = true;
                 }
             })
 
             readStream.emit('error', new Error('hm'))
-
-
         })
     }
 
@@ -66,12 +67,11 @@ class MultiFileReadStream extends Readable {
             console.log('pushing null')
             self.push(null);
         } else {
-            self.EventEmitter.once('fileRead', function(file) {
+            self.once('fileRead', function(file) {
                 self.push(file);
                 self.count += 1;
             })
-
-            self.EventEmitter.once('error', function() {
+            self.once('error', function(file) {
                 self.push(null);
             })
         }
@@ -88,7 +88,13 @@ function src() {
 
 
 src('./bin/myoutfile.json', './bin/myreadfile.json', function(err) {
-    console.log(err)
+    this.emit('error', err);
+    console.dir(this)
+    console.log('error: ' + err)
 }).on('data', function(data) {
     console.log(data)
+}).on('end', function() {
+    console.log('end')
+}).on('error', function(err) {
+    console.log('error!')
 })
