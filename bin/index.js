@@ -1,12 +1,11 @@
 //Import our readable stream
-const { Readable } = require('stream');
-const { EventEmitter } = require('events')
+const { Readable, Transform } = require('stream');
 
 
 class MultiFileReadStream extends Readable {
 
     constructor(options) {
-        super(Object.assign(options, {
+        super(Object.assign(options || {}, {
             objectMode: true
         }));
 
@@ -47,6 +46,7 @@ class MultiFileReadStream extends Readable {
 
             readStream.on('error', function(err) {
                 if (!self.errorState) {
+                    self.emit('error', err);
                     readStream.close();
                     if (errCb) {
                         errCb.call(self, err);
@@ -56,7 +56,6 @@ class MultiFileReadStream extends Readable {
                 }
             })
 
-            readStream.emit('error', new Error('hm'))
         })
     }
 
@@ -79,6 +78,29 @@ class MultiFileReadStream extends Readable {
 }
 
 
+class ConcatTransformStream extends Transform {
+    constructor(options) {
+        super(Object.assign(options || {}, {
+            objectMode: true
+        }))
+        this.contents = ""
+    }
+
+    _transform(chunk, enc, callback) {
+        this.contents += chunk.contents.join('');
+        callback();
+    }
+
+    /*
+        Called before end is emitted by the stream, push any last contents.
+    */
+    _flush() {
+        this.push(this.contents);
+        this.emit('end')
+    }
+}
+
+
 function src() {
     return new MultiFileReadStream({
         files: Array.prototype.slice.call(arguments, 0, arguments.length - 1),
@@ -86,15 +108,17 @@ function src() {
     })
 }
 
+function concatFiles(options) {
+    return new ConcatTransformStream(options)
+}
+
 
 src('./bin/myoutfile.json', './bin/myreadfile.json', function(err) {
-    this.emit('error', err);
-    console.dir(this)
     console.log('error: ' + err)
-}).on('data', function(data) {
+}).pipe(concatFiles()).on('data', function(data) {
     console.log(data)
+}).on('finish', function() {
+    console.log('finished')
 }).on('end', function() {
     console.log('end')
-}).on('error', function(err) {
-    console.log('error!')
 })
